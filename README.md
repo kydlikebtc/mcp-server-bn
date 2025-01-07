@@ -176,7 +176,7 @@ pnpm start
 ```
 ```
 
-### Debugging
+## Debugging
 
 Since MCP servers communicate over stdio, debugging can be challenging. We recommend using the [MCP Inspector](https://github.com/modelcontextprotocol/inspector), which is available as a package script:
 
