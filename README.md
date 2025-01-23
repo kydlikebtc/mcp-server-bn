@@ -1,6 +1,8 @@
 # mcp-server-cex-bn
 
-This MCP Server provides a robust interface for Binance spot trading operations.
+[![smithery badge](https://smithery.ai/badge/mcp-server-cex-bn)](https://smithery.ai/server/mcp-server-cex-bn)
+
+This MCP Server exposes various Binance trading operations.
 
 [中文说明](README_CN.md)
 
@@ -163,6 +165,15 @@ pnpm watch
 
 ## Installation
 
+### Installing via Smithery
+
+To install Binance Trading Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-server-cex-bn):
+
+```bash
+npx -y @smithery/cli install mcp-server-cex-bn --client claude
+```
+
+### Installing manually
 1. Clone the repository
 2. Install dependencies:
 ```bash
@@ -173,7 +184,6 @@ pnpm install
 ```bash
 pnpm build
 pnpm start
-```
 ```
 
 ### Debugging
