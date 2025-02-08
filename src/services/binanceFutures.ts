@@ -11,6 +11,8 @@ import {
   MarginType,
   WorkingType
 } from '../types/futures.js';
+import { FuturesWebSocketClient } from './futuresWebSocket.js';
+import { FuturesMarketDataClient } from './futuresMarketData.js';
 
 // Define futures client type with raw request methods
 interface FuturesClient extends Spot {
@@ -19,6 +21,8 @@ interface FuturesClient extends Spot {
 }
 
 let futuresClient: FuturesClient | null = null;
+let wsClient: FuturesWebSocketClient | null = null;
+let marketDataClient: FuturesMarketDataClient | null = null;
 const FUTURES_BASE_URL = 'https://fapi.binance.com';
 
 export async function initializeFuturesClient(): Promise<boolean> {
@@ -29,11 +33,28 @@ export async function initializeFuturesClient(): Promise<boolean> {
     }
     const { apiKey, apiSecret } = keys;
     
-    // Initialize client for USDⓈ-M Futures
-    // Initialize client for futures trading
+    // Initialize REST client for USDⓈ-M Futures
     futuresClient = new Spot(apiKey, apiSecret) as FuturesClient;
+
+    // Initialize WebSocket clients
+    wsClient = new FuturesWebSocketClient();
+    await wsClient.connect();
+    
+    marketDataClient = new FuturesMarketDataClient();
+    await marketDataClient.connect();
+
     return true;
   } catch (error) {
+    // Clean up any initialized clients
+    if (wsClient) {
+      await wsClient.disconnect();
+      wsClient = null;
+    }
+    if (marketDataClient) {
+      await marketDataClient.disconnect();
+      marketDataClient = null;
+    }
+
     if (error instanceof ApiKeyError) {
       throw error;
     }
@@ -42,11 +63,19 @@ export async function initializeFuturesClient(): Promise<boolean> {
 }
 
 export async function createFuturesOrder(order: FuturesOrder): Promise<any> {
-  if (!futuresClient) {
-    throw new BinanceClientError('Futures client not initialized');
+  if (!futuresClient || !wsClient) {
+    throw new BinanceClientError('Futures clients not initialized');
   }
 
   try {
+    // Try WebSocket order placement first
+    try {
+      return await wsClient.placeOrder(order);
+    } catch (wsError) {
+      console.log(`WebSocket order placement failed, falling back to REST: ${wsError instanceof Error ? wsError.message : 'Unknown error'}`);
+    }
+
+    // Fallback to REST API
     const params: Record<string, any> = {
       symbol: order.symbol,
       side: order.side,
@@ -120,8 +149,8 @@ export async function getFuturesPositions(): Promise<FuturesPosition[]> {
 }
 
 export async function setFuturesLeverage(settings: LeverageSettings): Promise<boolean> {
-  if (!futuresClient) {
-    throw new BinanceClientError('Futures client not initialized');
+  if (!futuresClient || !wsClient) {
+    throw new BinanceClientError('Futures clients not initialized');
   }
 
   try {
@@ -143,8 +172,8 @@ export async function setFuturesLeverage(settings: LeverageSettings): Promise<bo
 }
 
 export async function getFundingRate(symbol: string): Promise<FundingRate> {
-  if (!futuresClient) {
-    throw new BinanceClientError('Futures client not initialized');
+  if (!futuresClient || !marketDataClient) {
+    throw new BinanceClientError('Futures clients not initialized');
   }
 
   try {
@@ -156,11 +185,20 @@ export async function getFundingRate(symbol: string): Promise<FundingRate> {
 }
 
 export async function cancelFuturesOrder(symbol: string, orderId: number): Promise<void> {
-  if (!futuresClient) {
-    throw new BinanceClientError('Futures client not initialized');
+  if (!futuresClient || !wsClient) {
+    throw new BinanceClientError('Futures clients not initialized');
   }
 
   try {
+    // Try WebSocket cancellation first
+    try {
+      await wsClient.cancelOrder(symbol, orderId);
+      return;
+    } catch (wsError) {
+      console.log(`WebSocket order cancellation failed, falling back to REST: ${wsError instanceof Error ? wsError.message : 'Unknown error'}`);
+    }
+
+    // Fallback to REST API
     await futuresClient.signRequest('DELETE', `${FUTURES_BASE_URL}/fapi/v1/order`, {
       symbol,
       orderId
@@ -186,4 +224,26 @@ export async function getFuturesOpenOrders(symbol?: string): Promise<FuturesOrde
   } catch (error) {
     throw new BinanceClientError(`Failed to get open futures orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
+}
+
+// Market data subscription methods
+export function subscribeToMarketData(streams: string[]): void {
+  if (!marketDataClient) {
+    throw new BinanceClientError('Market data client not initialized');
+  }
+  marketDataClient.subscribe(streams);
+}
+
+export function unsubscribeFromMarketData(streams: string[]): void {
+  if (!marketDataClient) {
+    throw new BinanceClientError('Market data client not initialized');
+  }
+  marketDataClient.unsubscribe(streams);
+}
+
+export function getActiveSubscriptions(): string[] {
+  if (!marketDataClient) {
+    throw new BinanceClientError('Market data client not initialized');
+  }
+  return marketDataClient.getActiveSubscriptions();
 }
