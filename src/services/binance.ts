@@ -6,13 +6,27 @@ import { getApiKeys } from './keystore.js';
 let client: Spot | null = null;
 
 export async function initializeBinanceClient(): Promise<boolean> {
+  console.log('Initializing Binance spot client...');
   const credentials = await getApiKeys();
   if (!credentials) {
+    console.warn('No credentials available for Binance spot client');
     return false;
   }
 
-  client = new Spot(credentials.apiKey, credentials.apiSecret);
-  return true;
+  try {
+    console.log('Creating Binance spot client...');
+    client = new Spot(credentials.apiKey, credentials.apiSecret);
+    
+    // Test the connection
+    console.log('Testing Binance spot client connection...');
+    await client.account();
+    console.log('Successfully connected to Binance spot API');
+    return true;
+  } catch (error) {
+    console.error('Failed to initialize Binance spot client:', error instanceof Error ? error.message : String(error));
+    client = null;
+    return false;
+  }
 }
 
 export async function createSpotOrder(order: SpotOrder): Promise<OrderResponse> {
