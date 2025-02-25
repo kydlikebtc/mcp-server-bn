@@ -2,28 +2,48 @@ import { Spot } from '@binance/connector';
 import { BinanceCredentials, SpotOrder, OrderResponse, AccountBalance } from '../types/binance.js';
 import { BinanceClientError, OrderValidationError } from '../types/errors.js';
 import { getApiKeys } from './keystore.js';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const logFile = path.join(process.cwd(), 'logs', 'binance.log');
+
+// 确保日志目录存在
+if (!fs.existsSync(path.dirname(logFile))) {
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+}
+
+function log(message: string) {
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(logFile, `${timestamp} - ${message}\n`);
+}
+
+function logError(message: string, error?: unknown) {
+  const timestamp = new Date().toISOString();
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  fs.appendFileSync(logFile, `${timestamp} - ERROR: ${message} ${error ? `- ${errorMessage}` : ''}\n`);
+}
 
 let client: Spot | null = null;
 
 export async function initializeBinanceClient(): Promise<boolean> {
-  console.log('Initializing Binance spot client...');
+  log('Initializing Binance spot client...');
   const credentials = await getApiKeys();
   if (!credentials) {
-    console.warn('No credentials available for Binance spot client');
+    log('No credentials available for Binance spot client');
     return false;
   }
 
   try {
-    console.log('Creating Binance spot client...');
+    log('Creating Binance spot client...');
     client = new Spot(credentials.apiKey, credentials.apiSecret);
     
     // Test the connection
-    console.log('Testing Binance spot client connection...');
+    log('Testing Binance spot client connection...');
     await client.account();
-    console.log('Successfully connected to Binance spot API');
+    log('Successfully connected to Binance spot API');
     return true;
   } catch (error) {
-    console.error('Failed to initialize Binance spot client:', error instanceof Error ? error.message : String(error));
+    logError('Failed to initialize Binance spot client:', error);
     client = null;
     return false;
   }

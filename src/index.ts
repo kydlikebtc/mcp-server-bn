@@ -46,9 +46,29 @@ import {
   initializeFuturesClient,
 } from "./services/binanceFutures.js";
 import { FuturesOrder, LeverageSettings, TimeInForce, PositionSide, WorkingType } from "./types/futures.js";
+import * as fs from 'fs';
+import * as path from 'path';
 
 // Load environment variables first
 dotenv.config();
+
+const logFile = path.join(process.cwd(), 'logs', 'server.log');
+
+// 确保日志目录存在
+if (!fs.existsSync(path.dirname(logFile))) {
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+}
+
+function log(message: string) {
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(logFile, `${timestamp} - ${message}\n`);
+}
+
+function logError(message: string, error?: unknown) {
+  const timestamp = new Date().toISOString();
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  fs.appendFileSync(logFile, `${timestamp} - ERROR: ${message} ${error ? `- ${errorMessage}` : ''}\n`);
+}
 
 const server = new Server(
   {
@@ -84,7 +104,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 });
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  console.error("call tool request:", JSON.stringify(request));
+  log(`Call tool request: ${JSON.stringify(request)}`);
   switch (request.params.name) {
     case "configure_api_keys": {
       const args = request.params.arguments as { apiKey: string; apiSecret: string };
@@ -169,7 +189,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       };
     }
 
-    // Futures trading tools
     case "create_futures_order": {
       const args = request.params.arguments as unknown as {
         symbol: string;
@@ -250,7 +269,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [
           {
             type: "text",
-            text: `Leverage set to ${args.leverage}x for ${args.symbol}`,
+            text: "Leverage set successfully",
           },
         ],
       };
@@ -295,29 +314,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     default:
-      throw new Error("Unknown tool");
+      throw new Error(`Unknown tool: ${request.params.name}`);
   }
 });
 
 async function main() {
-  // Try to initialize Binance clients on startup
   try {
+    // Initialize Binance clients
     const spotInitialized = await initializeBinanceClient();
     const futuresInitialized = await initializeFuturesClient();
-    if (spotInitialized && futuresInitialized) {
-      console.log("Binance clients initialized successfully");
+    
+    if (!spotInitialized || !futuresInitialized) {
+      logError('Binance clients not initialized');
     } else {
-      console.warn("No API keys found, waiting for configuration");
+      log('Binance clients initialized successfully');
     }
-  } catch (error) {
-    console.error("Failed to initialize Binance clients:", error instanceof Error ? error.message : String(error));
-  }
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+    // 只使用 stdio 传输层
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    log('Server started successfully');
+  } catch (error) {
+    logError('Failed to start server:', error);
+    process.exit(1);
+  }
 }
 
 main().catch((error) => {
-  console.error("Server error:", error instanceof Error ? error.message : String(error));
+  logError('Unhandled error:', error);
   process.exit(1);
 });

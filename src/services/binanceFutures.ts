@@ -1,6 +1,8 @@
 import { Spot } from '@binance/connector';
 import { BinanceClientError, ApiKeyError, OrderValidationError, InsufficientMarginError, InvalidPositionModeError } from '../types/errors.js';
 import { getApiKeys } from './keystore.js';
+import * as fs from 'fs';
+import * as path from 'path';
 import {
   FuturesOrder,
   FuturesPosition,
@@ -12,6 +14,24 @@ import {
   WorkingType
 } from '../types/futures.js';
 
+const logFile = path.join(process.cwd(), 'logs', 'futures.log');
+
+// 确保日志目录存在
+if (!fs.existsSync(path.dirname(logFile))) {
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+}
+
+function log(message: string) {
+  const timestamp = new Date().toISOString();
+  fs.appendFileSync(logFile, `${timestamp} - ${message}\n`);
+}
+
+function logError(message: string, error?: unknown) {
+  const timestamp = new Date().toISOString();
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  fs.appendFileSync(logFile, `${timestamp} - ERROR: ${message} ${error ? `- ${errorMessage}` : ''}\n`);
+}
+
 interface SpotExtended extends Spot {
   changeLeverage: (params: { symbol: string; leverage: number }) => Promise<any>;
   premiumIndex: (params: { symbol: string }) => Promise<any>;
@@ -20,26 +40,26 @@ interface SpotExtended extends Spot {
 let futuresClient: SpotExtended | null = null;
 
 export async function initializeFuturesClient(): Promise<boolean> {
-  console.log('Initializing Binance futures client...');
+  log('Initializing Binance futures client...');
   try {
     const keys = await getApiKeys();
     if (!keys) {
-      console.warn('No credentials available for Binance futures client');
+      logError('No credentials available for Binance futures client');
       throw new ApiKeyError('Futures API keys not found');
     }
     const { apiKey, apiSecret } = keys;
     
-    console.log('Creating Binance futures client...');
+    log('Creating Binance futures client...');
     // Initialize client for USDⓈ-M Futures
     futuresClient = new Spot(apiKey, apiSecret) as SpotExtended;
 
     // Test the connection
-    console.log('Testing Binance futures client connection...');
+    log('Testing Binance futures client connection...');
     await futuresClient.account();
-    console.log('Successfully connected to Binance futures API');
+    log('Successfully connected to Binance futures API');
     return true;
   } catch (error) {
-    console.error('Failed to initialize futures client:', error instanceof Error ? error.message : String(error));
+    logError('Failed to initialize futures client:', error);
     futuresClient = null;
     if (error instanceof ApiKeyError) {
       throw error;
@@ -50,12 +70,12 @@ export async function initializeFuturesClient(): Promise<boolean> {
 
 export async function createFuturesOrder(order: FuturesOrder): Promise<any> {
   if (!futuresClient) {
-    console.error('Attempted to create futures order without initialized client');
+    logError('Attempted to create futures order without initialized client');
     throw new BinanceClientError('Futures client not initialized');
   }
 
   try {
-    console.log('Creating futures order:', JSON.stringify(order, null, 2));
+    log(`Creating futures order: ${JSON.stringify(order, null, 2)}`);
     const params = {
       symbol: order.symbol,
       side: order.side,
@@ -85,22 +105,22 @@ export async function createFuturesOrder(order: FuturesOrder): Promise<any> {
       throw new OrderValidationError('Callback rate is required for TRAILING_STOP_MARKET orders');
     }
 
-    console.log('Sending futures order request with params:', JSON.stringify(params, null, 2));
+    log(`Sending futures order request with params: ${JSON.stringify(params, null, 2)}`);
     const response = await futuresClient.newOrder(params);
-    console.log('Futures order created successfully:', JSON.stringify(response, null, 2));
+    log(`Futures order created successfully: ${JSON.stringify(response, null, 2)}`);
     return response.data;
   } catch (error) {
-    console.error('Error creating futures order:', error instanceof Error ? error.message : String(error));
+    logError('Error creating futures order:', error);
     if (error instanceof OrderValidationError) {
       throw error;
     }
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     if (errorMessage.includes('insufficient margin')) {
-      console.error('Insufficient margin for futures order');
+      logError('Insufficient margin for futures order');
       throw new InsufficientMarginError(`Insufficient margin to create futures order: ${errorMessage}`);
     }
     if (errorMessage.includes('invalid position mode')) {
-      console.error('Invalid position mode for futures order');
+      logError('Invalid position mode for futures order');
       throw new InvalidPositionModeError(`Invalid position mode for futures order: ${errorMessage}`);
     }
     throw new BinanceClientError(`Failed to create futures order: ${errorMessage}`);
@@ -109,14 +129,14 @@ export async function createFuturesOrder(order: FuturesOrder): Promise<any> {
 
 export async function getFuturesAccountInformation(): Promise<FuturesAccountInformation> {
   if (!futuresClient) {
-    console.error('Attempted to get futures account information without initialized client');
+    logError('Attempted to get futures account information without initialized client');
     throw new BinanceClientError('Futures client not initialized');
   }
 
   try {
-    console.log('Fetching futures account information...');
+    log('Fetching futures account information...');
     const response = await futuresClient.account();
-    console.log('Successfully retrieved futures account information');
+    log('Successfully retrieved futures account information');
     const accountInfo = {
       feeTier: 0,
       canTrade: true,
@@ -152,7 +172,7 @@ export async function getFuturesAccountInformation(): Promise<FuturesAccountInfo
     };
     return accountInfo;
   } catch (error) {
-    console.error('Error getting futures account information:', error instanceof Error ? error.message : String(error));
+    logError('Error getting futures account information:', error);
     throw new BinanceClientError(`Failed to get futures account information: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
