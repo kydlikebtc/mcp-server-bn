@@ -17,11 +17,12 @@
     "inspector": "npx @modelcontextprotocol/inspector build/index.js"
   },
   "dependencies": {
-    "@binance/connector": "^3.6.0",
+    "@binance/connector": "^3.6.1",
     "@modelcontextprotocol/sdk": "0.6.0",
     "@types/keytar": "^4.4.2",
     "dotenv": "^16.4.6",
     "keytar": "^7.9.0",
+    "node-binance-api": "^0.13.1",
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {

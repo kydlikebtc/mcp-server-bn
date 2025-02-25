@@ -12,14 +12,12 @@ import {
   WorkingType
 } from '../types/futures.js';
 
-// Define futures client type with raw request methods
-interface FuturesClient extends Spot {
-  request(method: string, path: string, params?: any): Promise<{ data: any }>;
-  signRequest(method: string, path: string, params?: any): Promise<{ data: any }>;
+interface SpotExtended extends Spot {
+  changeLeverage: (params: { symbol: string; leverage: number }) => Promise<any>;
+  premiumIndex: (params: { symbol: string }) => Promise<any>;
 }
 
-let futuresClient: FuturesClient | null = null;
-const FUTURES_BASE_URL = 'https://fapi.binance.com';
+let futuresClient: SpotExtended | null = null;
 
 export async function initializeFuturesClient(): Promise<boolean> {
   console.log('Initializing Binance futures client...');
@@ -33,11 +31,11 @@ export async function initializeFuturesClient(): Promise<boolean> {
     
     console.log('Creating Binance futures client...');
     // Initialize client for USDⓈ-M Futures
-    futuresClient = new Spot(apiKey, apiSecret) as FuturesClient;
+    futuresClient = new Spot(apiKey, apiSecret) as SpotExtended;
 
     // Test the connection
     console.log('Testing Binance futures client connection...');
-    await futuresClient.request('GET', `${FUTURES_BASE_URL}/fapi/v1/ping`);
+    await futuresClient.account();
     console.log('Successfully connected to Binance futures API');
     return true;
   } catch (error) {
@@ -58,19 +56,19 @@ export async function createFuturesOrder(order: FuturesOrder): Promise<any> {
 
   try {
     console.log('Creating futures order:', JSON.stringify(order, null, 2));
-    const params: Record<string, any> = {
+    const params = {
       symbol: order.symbol,
       side: order.side,
       type: order.type,
       quantity: order.quantity,
-    };
+      timeInForce: order.timeInForce || 'GTC'
+    } as any;
 
     if (order.positionSide) params.positionSide = order.positionSide;
     if (order.price) params.price = order.price;
     if (order.stopPrice) params.stopPrice = order.stopPrice;
     if (order.reduceOnly !== undefined) params.reduceOnly = order.reduceOnly;
     if (order.workingType) params.workingType = order.workingType;
-    if (order.timeInForce) params.timeInForce = order.timeInForce;
     if (order.activationPrice) params.activationPrice = order.activationPrice;
     if (order.callbackRate) params.callbackRate = order.callbackRate;
     if (order.closePosition !== undefined) params.closePosition = order.closePosition;
@@ -88,8 +86,8 @@ export async function createFuturesOrder(order: FuturesOrder): Promise<any> {
     }
 
     console.log('Sending futures order request with params:', JSON.stringify(params, null, 2));
-    const response = await futuresClient.signRequest('POST', `${FUTURES_BASE_URL}/fapi/v1/order`, params);
-    console.log('Futures order created successfully:', JSON.stringify(response.data, null, 2));
+    const response = await futuresClient.newOrder(params);
+    console.log('Futures order created successfully:', JSON.stringify(response, null, 2));
     return response.data;
   } catch (error) {
     console.error('Error creating futures order:', error instanceof Error ? error.message : String(error));
@@ -117,9 +115,42 @@ export async function getFuturesAccountInformation(): Promise<FuturesAccountInfo
 
   try {
     console.log('Fetching futures account information...');
-    const response = await futuresClient.signRequest('GET', `${FUTURES_BASE_URL}/fapi/v1/account`);
+    const response = await futuresClient.account();
     console.log('Successfully retrieved futures account information');
-    return response.data;
+    const accountInfo = {
+      feeTier: 0,
+      canTrade: true,
+      canDeposit: true,
+      canWithdraw: true,
+      updateTime: Date.now(),
+      totalInitialMargin: '0',
+      totalMaintMargin: '0',
+      totalWalletBalance: '0',
+      totalUnrealizedProfit: '0',
+      totalMarginBalance: '0',
+      totalPositionInitialMargin: '0',
+      totalOpenOrderInitialMargin: '0',
+      totalCrossWalletBalance: '0',
+      totalCrossUnPnl: '0',
+      availableBalance: '0',
+      maxWithdrawAmount: '0',
+      assets: response.data.balances.map((balance: any) => ({
+        asset: balance.asset,
+        walletBalance: balance.free,
+        unrealizedProfit: '0',
+        marginBalance: balance.locked,
+        maintMargin: '0',
+        initialMargin: '0',
+        positionInitialMargin: '0',
+        openOrderInitialMargin: '0',
+        maxWithdrawAmount: balance.free,
+        crossWalletBalance: '0',
+        crossUnPnl: '0',
+        availableBalance: balance.free
+      })),
+      positions: []
+    };
+    return accountInfo;
   } catch (error) {
     console.error('Error getting futures account information:', error instanceof Error ? error.message : String(error));
     throw new BinanceClientError(`Failed to get futures account information: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -132,8 +163,22 @@ export async function getFuturesPositions(): Promise<FuturesPosition[]> {
   }
 
   try {
-    const response = await futuresClient.signRequest('GET', `${FUTURES_BASE_URL}/fapi/v1/positionRisk`);
-    return response.data;
+    const response = await futuresClient.account();
+    const accountData = response.data as any;
+    const positions = accountData.positions || [];
+    return positions.map((pos: any) => ({
+      symbol: pos.symbol || '',
+      positionAmt: pos.positionAmt || '0',
+      entryPrice: pos.entryPrice || '0',
+      markPrice: pos.markPrice || '0',
+      unRealizedProfit: pos.unrealizedProfit || '0',
+      liquidationPrice: pos.liquidationPrice || '0',
+      leverage: parseInt(pos.leverage || '1'),
+      marginType: pos.marginType || MarginType.CROSSED,
+      isolatedMargin: pos.isolatedMargin || '0',
+      positionSide: pos.positionSide || PositionSide.BOTH,
+      updateTime: pos.updateTime || Date.now()
+    }));
   } catch (error) {
     throw new BinanceClientError(`Failed to get futures positions: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
@@ -145,7 +190,7 @@ export async function setFuturesLeverage(settings: LeverageSettings): Promise<bo
   }
 
   try {
-    await futuresClient.signRequest('POST', `${FUTURES_BASE_URL}/fapi/v1/leverage`, {
+    await futuresClient.changeLeverage({
       symbol: settings.symbol,
       leverage: settings.leverage
     });
@@ -168,8 +213,14 @@ export async function getFundingRate(symbol: string): Promise<FundingRate> {
   }
 
   try {
-    const response = await futuresClient.request('GET', `${FUTURES_BASE_URL}/fapi/v1/fundingRate`, { symbol });
-    return response.data[0]; // Return the latest funding rate
+    const response = await futuresClient.premiumIndex({ symbol });
+    const data = response.data[0] || {};
+    return {
+      symbol: data.symbol || symbol,
+      fundingRate: data.lastFundingRate || '0',
+      fundingTime: data.nextFundingTime || Date.now(),
+      nextFundingTime: data.nextFundingTime || Date.now()
+    };
   } catch (error) {
     throw new BinanceClientError(`Failed to get funding rate: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
@@ -181,10 +232,7 @@ export async function cancelFuturesOrder(symbol: string, orderId: number): Promi
   }
 
   try {
-    await futuresClient.signRequest('DELETE', `${FUTURES_BASE_URL}/fapi/v1/order`, {
-      symbol,
-      orderId
-    });
+    await futuresClient.cancelOrder(symbol, { orderId });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     if (errorMessage.includes('invalid position mode')) {
@@ -201,8 +249,23 @@ export async function getFuturesOpenOrders(symbol?: string): Promise<FuturesOrde
 
   try {
     const params = symbol ? { symbol } : {};
-    const response = await futuresClient.signRequest('GET', `${FUTURES_BASE_URL}/fapi/v1/openOrders`, params);
-    return response.data;
+    const response = await futuresClient.openOrders(params);
+    return response.data.map((order: any) => ({
+      symbol: order.symbol,
+      side: order.side,
+      type: order.type,
+      quantity: order.origQty,
+      price: order.price,
+      timeInForce: order.timeInForce,
+      positionSide: order.positionSide,
+      stopPrice: order.stopPrice,
+      workingType: order.workingType,
+      closePosition: order.closePosition,
+      activationPrice: order.activationPrice,
+      callbackRate: order.callbackRate,
+      priceProtect: order.priceProtect,
+      reduceOnly: order.reduceOnly
+    }));
   } catch (error) {
     throw new BinanceClientError(`Failed to get open futures orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
