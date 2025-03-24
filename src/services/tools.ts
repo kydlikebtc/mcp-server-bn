@@ -39,7 +39,11 @@ export const createOrderTool = {
       },
       quantity: { 
         type: "string", 
-        description: "Order quantity" 
+        description: "Order quantity (amount of base asset)" 
+      },
+      quoteOrderQty: {
+        type: "string",
+        description: "Quote order quantity (amount of quote asset to spend or receive, e.g. USDT)"
       },
       price: { 
         type: "string", 
@@ -51,7 +55,7 @@ export const createOrderTool = {
         description: "Time in force" 
       }
     },
-    required: ["symbol", "side", "type", "quantity"],
+    required: ["symbol", "side", "type"],
   },
 };
 
@@ -79,8 +83,13 @@ export const getBalancesTool = {
   description: "Get account balances",
   inputSchema: {
     type: "object",
-    properties: {},
-    required: [],
+    properties: {
+      random_string: {
+        type: "string",
+        description: "Dummy parameter for no-parameter tools"
+      }
+    },
+    required: ["random_string"],
   },
 };
 

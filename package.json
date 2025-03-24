@@ -1,8 +1,7 @@
 {
-  "name": "mcp-server-cex-bn",
-  "version": "0.1.0",
+  "name": "@kydfeng/mcp-server-cex-bn",
+  "version": "0.1.2",
   "description": "MCP Server for Binance Spot Trading",
-  "private": true,
   "type": "module",
   "bin": {
     "mcp-server-cex-bn": "./build/index.js"
@@ -29,5 +28,18 @@
   "devDependencies": {
     "@types/node": "^20.17.9",
     "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "mcp",
+    "binance",
+    "trading",
+    "crypto",
+    "model-context-protocol"
+  ],
+  "author": "kydfeng",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kydfeng/mcp-server-bn.git"
   }
 }

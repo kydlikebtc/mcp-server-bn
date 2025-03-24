@@ -17,7 +17,7 @@ import {
   getAccountBalances,
   getOpenOrders,
 } from "./services/binance.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import dotenv from "dotenv";
 import { initializeBinanceClient } from "./services/binance.js";
@@ -44,10 +44,14 @@ import {
   getFuturesOpenOrders,
   getFundingRate,
   initializeFuturesClient,
+  changePositionMode,
+  changeMarginType,
+  getFuturesKlines,
 } from "./services/binanceFutures.js";
-import { FuturesOrder, LeverageSettings, TimeInForce, PositionSide, WorkingType } from "./types/futures.js";
+import { FuturesOrder, LeverageSettings, TimeInForce, PositionSide, WorkingType, MarginType } from "./types/futures.js";
 import * as fs from 'fs';
 import * as path from 'path';
+import { z } from "zod";
 
 // Load environment variables first
 dotenv.config();
@@ -70,253 +74,281 @@ function logError(message: string, error?: unknown) {
   fs.appendFileSync(logFile, `${timestamp} - ERROR: ${message} ${error ? `- ${errorMessage}` : ''}\n`);
 }
 
-const server = new Server(
+// 创建高级McpServer实例，而不是低级Server实例
+const server = new McpServer({
+  name: "mcp-server-binance",
+  version: "0.1.0",
+});
+
+// 注册工具
+server.tool(
+  "configure_api_keys",
   {
-    name: "mcp-server-binance",
-    version: "0.1.0",
+    apiKey: z.string().describe("Binance API key"),
+    apiSecret: z.string().describe("Binance API secret")
   },
-  {
-    capabilities: {
-      resources: {},
-      tools: {},
-      prompts: {},
-    },
+  async ({ apiKey, apiSecret }) => {
+    await storeApiKeys(apiKey, apiSecret);
+    const spotInitialized = await initializeBinanceClient();
+    const futuresInitialized = await initializeFuturesClient();
+    return {
+      content: [
+        {
+          type: "text",
+          text: spotInitialized && futuresInitialized
+            ? "API keys configured successfully"
+            : "Failed to initialize Binance clients",
+        },
+      ],
+    };
   }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return {
-    tools: [
-      configureApiKeysTool,
-      createOrderTool,
-      cancelOrderTool,
-      getBalancesTool,
-      getOpenOrdersTool,
-      createFuturesOrderTool,
-      cancelFuturesOrderTool,
-      getFuturesPositionsTool,
-      setFuturesLeverageTool,
-      getFuturesAccountTool,
-      getFuturesOpenOrdersTool,
-      getFundingRateTool,
-    ],
-  };
-});
-
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  log(`Call tool request: ${JSON.stringify(request)}`);
-  switch (request.params.name) {
-    case "configure_api_keys": {
-      const args = request.params.arguments as { apiKey: string; apiSecret: string };
-      await storeApiKeys(args.apiKey, args.apiSecret);
-      const spotInitialized = await initializeBinanceClient();
-      const futuresInitialized = await initializeFuturesClient();
-      return {
-        content: [
-          {
-            type: "text",
-            text: spotInitialized && futuresInitialized
-              ? "API keys configured successfully"
-              : "Failed to initialize Binance clients",
-          },
-        ],
-      };
-    }
-
-    case "create_spot_order": {
-      const args = request.params.arguments as unknown as {
-        symbol: string;
-        side: "BUY" | "SELL";
-        type: "LIMIT" | "MARKET";
-        quantity?: string;
-        price?: string;
-        timeInForce?: "GTC" | "IOC" | "FOK";
-      };
-      const order: SpotOrder = {
-        symbol: args.symbol,
-        side: args.side,
-        type: args.type,
-        quantity: args.quantity,
-        price: args.price,
-        timeInForce: args.timeInForce,
-      };
-      const response = await createSpotOrder(order);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response),
-          },
-        ],
-      };
-    }
-
-    case "cancel_order": {
-      const args = request.params.arguments as { symbol: string; orderId: number };
-      await cancelOrder(args.symbol, args.orderId);
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Order cancelled successfully",
-          },
-        ],
-      };
-    }
-
-    case "get_balances": {
-      const balances = await getAccountBalances();
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(balances),
-          },
-        ],
-      };
-    }
-
-    case "get_open_orders": {
-      const args = request.params.arguments as { symbol?: string };
-      const orders = await getOpenOrders(args?.symbol);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(orders),
-          },
-        ],
-      };
-    }
-
-    case "create_futures_order": {
-      const args = request.params.arguments as unknown as {
-        symbol: string;
-        side: "BUY" | "SELL";
-        type: "LIMIT" | "MARKET" | "STOP" | "STOP_MARKET" | "TAKE_PROFIT" | "TAKE_PROFIT_MARKET" | "TRAILING_STOP_MARKET";
-        quantity: string;
-        price?: string;
-        stopPrice?: string;
-        timeInForce?: keyof typeof TimeInForce;
-        reduceOnly?: boolean;
-        closePosition?: boolean;
-        positionSide?: keyof typeof PositionSide;
-        workingType?: keyof typeof WorkingType;
-        priceProtect?: boolean;
-        activationPrice?: string;
-        callbackRate?: string;
-      };
-      const order: FuturesOrder = {
-        symbol: args.symbol,
-        side: args.side,
-        type: args.type,
-        quantity: args.quantity,
-        price: args.price,
-        stopPrice: args.stopPrice,
-        timeInForce: args.timeInForce as TimeInForce,
-        reduceOnly: args.reduceOnly,
-        closePosition: args.closePosition,
-        positionSide: args.positionSide as PositionSide,
-        workingType: args.workingType as WorkingType,
-        priceProtect: args.priceProtect,
-        activationPrice: args.activationPrice,
-        callbackRate: args.callbackRate,
-      };
-      const response = await createFuturesOrder(order);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(response),
-          },
-        ],
-      };
-    }
-
-    case "cancel_futures_order": {
-      const args = request.params.arguments as { symbol: string; orderId: number };
-      await cancelFuturesOrder(args.symbol, args.orderId);
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Futures order cancelled successfully",
-          },
-        ],
-      };
-    }
-
-    case "get_futures_positions": {
-      const positions = await getFuturesPositions();
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(positions),
-          },
-        ],
-      };
-    }
-
-    case "set_futures_leverage": {
-      const args = request.params.arguments as { symbol: string; leverage: number };
-      const settings: LeverageSettings = {
-        symbol: args.symbol,
-        leverage: args.leverage,
-      };
-      await setFuturesLeverage(settings);
-      return {
-        content: [
-          {
-            type: "text",
-            text: "Leverage set successfully",
-          },
-        ],
-      };
-    }
-
-    case "get_futures_account": {
-      const account = await getFuturesAccount();
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(account),
-          },
-        ],
-      };
-    }
-
-    case "get_futures_open_orders": {
-      const args = request.params.arguments as { symbol?: string };
-      const orders = await getFuturesOpenOrders(args?.symbol);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(orders),
-          },
-        ],
-      };
-    }
-
-    case "get_funding_rate": {
-      const args = request.params.arguments as { symbol: string };
-      const rate = await getFundingRate(args.symbol);
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(rate),
-          },
-        ],
-      };
-    }
-
-    default:
-      throw new Error(`Unknown tool: ${request.params.name}`);
+server.tool(
+  "create_spot_order",
+  {
+    symbol: z.string().describe("Trading pair symbol (e.g., BTCUSDT)"),
+    side: z.enum(["BUY", "SELL"]).describe("Order side"),
+    type: z.enum(["LIMIT", "MARKET"]).describe("Order type"),
+    quantity: z.string().optional().describe("Order quantity (amount of base asset)"),
+    quoteOrderQty: z.string().optional().describe("Quote order quantity (amount of quote asset to spend or receive, e.g. USDT)"),
+    price: z.string().optional().describe("Order price (required for LIMIT orders)"),
+    timeInForce: z.enum(["GTC", "IOC", "FOK"]).optional().describe("Time in force")
+  },
+  async (args) => {
+    const order: SpotOrder = {
+      symbol: args.symbol,
+      side: args.side,
+      type: args.type,
+      quantity: args.quantity,
+      quoteOrderQty: args.quoteOrderQty,
+      price: args.price,
+      timeInForce: args.timeInForce,
+    };
+    const response = await createSpotOrder(order);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(response),
+        },
+      ],
+    };
   }
-});
+);
+
+server.tool(
+  "cancel_order",
+  {
+    symbol: z.string().describe("Trading pair symbol (e.g., BTCUSDT)"),
+    orderId: z.number().describe("Order ID to cancel")
+  },
+  async ({ symbol, orderId }) => {
+    await cancelOrder(symbol, orderId);
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Order cancelled successfully",
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "get_balances",
+  {},
+  async () => {
+    const balances = await getAccountBalances();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(balances),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "get_open_orders",
+  {
+    symbol: z.string().optional().describe("Trading pair symbol (optional)")
+  },
+  async ({ symbol }) => {
+    const orders = await getOpenOrders(symbol);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(orders),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "create_futures_order",
+  {
+    symbol: z.string().describe("Trading pair symbol (e.g., BTCUSDT)"),
+    side: z.enum(["BUY", "SELL"]).describe("Order side"),
+    type: z.enum([
+      "LIMIT", "MARKET", "STOP", "STOP_MARKET", 
+      "TAKE_PROFIT", "TAKE_PROFIT_MARKET", "TRAILING_STOP_MARKET"
+    ]).describe("Order type"),
+    quantity: z.string().describe("Order quantity"),
+    price: z.string().optional().describe("Order price (required for LIMIT orders)"),
+    stopPrice: z.string().optional().describe("Stop price (required for STOP orders)"),
+    timeInForce: z.enum(["GTC", "IOC", "FOK", "GTX"]).optional().describe("Time in force"),
+    reduceOnly: z.boolean().optional().describe("Reduce only flag"),
+    closePosition: z.boolean().optional().describe("Close position flag"),
+    positionSide: z.enum(["BOTH", "LONG", "SHORT"]).optional().describe("Position side"),
+    workingType: z.enum(["MARK_PRICE", "CONTRACT_PRICE"]).optional().describe("Working type"),
+    priceProtect: z.boolean().optional().describe("Price protect flag"),
+    activationPrice: z.string().optional().describe("Activation price for TRAILING_STOP_MARKET orders"),
+    callbackRate: z.string().optional().describe("Callback rate for TRAILING_STOP_MARKET orders")
+  },
+  async (args) => {
+    const order: FuturesOrder = {
+      symbol: args.symbol,
+      side: args.side,
+      type: args.type,
+      quantity: args.quantity,
+      price: args.price,
+      stopPrice: args.stopPrice,
+      timeInForce: args.timeInForce as TimeInForce,
+      reduceOnly: args.reduceOnly,
+      closePosition: args.closePosition,
+      positionSide: args.positionSide as PositionSide,
+      workingType: args.workingType as WorkingType,
+      priceProtect: args.priceProtect,
+      activationPrice: args.activationPrice,
+      callbackRate: args.callbackRate,
+    };
+    const response = await createFuturesOrder(order);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(response),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "cancel_futures_order",
+  {
+    symbol: z.string().describe("Trading pair symbol (e.g., BTCUSDT)"),
+    orderId: z.number().describe("Order ID to cancel")
+  },
+  async ({ symbol, orderId }) => {
+    await cancelFuturesOrder(symbol, orderId);
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Futures order cancelled successfully",
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "get_futures_positions",
+  {},
+  async () => {
+    const positions = await getFuturesPositions();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(positions),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "set_futures_leverage",
+  {
+    symbol: z.string().describe("Trading pair symbol (e.g., BTCUSDT)"),
+    leverage: z.number().describe("Leverage value (1-125)")
+  },
+  async ({ symbol, leverage }) => {
+    const settings: LeverageSettings = {
+      symbol: symbol,
+      leverage: leverage,
+    };
+    await setFuturesLeverage(settings);
+    return {
+      content: [
+        {
+          type: "text",
+          text: "Leverage set successfully",
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "get_futures_account",
+  {},
+  async () => {
+    const account = await getFuturesAccount();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(account),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "get_futures_open_orders",
+  {
+    symbol: z.string().optional().describe("Trading pair symbol (optional)")
+  },
+  async ({ symbol }) => {
+    const orders = await getFuturesOpenOrders(symbol);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(orders),
+        },
+      ],
+    };
+  }
+);
+
+server.tool(
+  "get_funding_rate",
+  {
+    symbol: z.string().describe("Trading pair symbol (e.g., BTCUSDT)")
+  },
+  async ({ symbol }) => {
+    const rate = await getFundingRate(symbol);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(rate),
+        },
+      ],
+    };
+  }
+);
 
 async function main() {
   try {
@@ -330,10 +362,10 @@ async function main() {
       log('Binance clients initialized successfully');
     }
 
-    // 只使用 stdio 传输层
+    // 使用stdio传输层
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    log('Server started successfully');
+    log('Server started successfully with stdio transport');
   } catch (error) {
     logError('Failed to start server:', error);
     process.exit(1);

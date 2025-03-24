@@ -35,6 +35,9 @@ function logError(message: string, error?: unknown) {
 interface SpotExtended extends Spot {
   changeLeverage: (params: { symbol: string; leverage: number }) => Promise<any>;
   premiumIndex: (params: { symbol: string }) => Promise<any>;
+  changePositionMode: (params: { dualSidePosition: boolean }) => Promise<any>;
+  changeMarginType: (params: { symbol: string; marginType: MarginType }) => Promise<any>;
+  klines: (symbol: string, interval: string, options?: any) => Promise<any>;
 }
 
 let futuresClient: SpotExtended | null = null;
@@ -288,5 +291,81 @@ export async function getFuturesOpenOrders(symbol?: string): Promise<FuturesOrde
     }));
   } catch (error) {
     throw new BinanceClientError(`Failed to get open futures orders: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
+}
+
+export async function changePositionMode(dualSidePosition: boolean): Promise<boolean> {
+  if (!futuresClient) {
+    throw new BinanceClientError('Futures client not initialized');
+  }
+
+  try {
+    log(`Changing position mode to ${dualSidePosition ? 'dual-side' : 'one-way'}`);
+    await futuresClient.changePositionMode({
+      dualSidePosition: dualSidePosition
+    });
+    log('Position mode changed successfully');
+    return true;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logError(`Failed to change position mode:`, error);
+    throw new BinanceClientError(`Failed to change position mode: ${errorMessage}`);
+  }
+}
+
+export async function changeMarginType(symbol: string, marginType: MarginType): Promise<boolean> {
+  if (!futuresClient) {
+    throw new BinanceClientError('Futures client not initialized');
+  }
+
+  try {
+    log(`Changing margin type for ${symbol} to ${marginType}`);
+    await futuresClient.changeMarginType({
+      symbol: symbol,
+      marginType: marginType
+    });
+    log('Margin type changed successfully');
+    return true;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logError(`Failed to change margin type:`, error);
+    if (errorMessage.includes('isolated balance insufficient')) {
+      throw new InsufficientMarginError(`Insufficient margin to change margin type: ${errorMessage}`);
+    }
+    throw new BinanceClientError(`Failed to change margin type: ${errorMessage}`);
+  }
+}
+
+export async function getFuturesKlines(symbol: string, interval: string, limit?: number): Promise<any[]> {
+  if (!futuresClient) {
+    throw new BinanceClientError('Futures client not initialized');
+  }
+
+  try {
+    const params: any = {};
+    if (limit) params.limit = limit;
+
+    log(`Querying futures klines for ${symbol}, interval ${interval}`);
+    const response = await futuresClient.klines(symbol, interval, params);
+    log('Futures klines retrieved successfully');
+    
+    // 转换返回数据为更易于使用的格式
+    return response.data.map((kline: any[]) => ({
+      openTime: kline[0],
+      open: kline[1],
+      high: kline[2],
+      low: kline[3],
+      close: kline[4],
+      volume: kline[5],
+      closeTime: kline[6],
+      quoteAssetVolume: kline[7],
+      trades: kline[8],
+      takerBuyBaseAssetVolume: kline[9],
+      takerBuyQuoteAssetVolume: kline[10]
+    }));
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    logError(`Failed to get futures klines:`, error);
+    throw new BinanceClientError(`Failed to get futures klines: ${errorMessage}`);
   }
 }

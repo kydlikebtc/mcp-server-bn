@@ -1,5 +1,5 @@
 import { Spot } from '@binance/connector';
-import { BinanceCredentials, SpotOrder, OrderResponse, AccountBalance } from '../types/binance.js';
+import { BinanceCredentials, SpotOrder, OrderResponse, AccountBalance, ExchangeInfo } from '../types/binance.js';
 import { BinanceClientError, OrderValidationError } from '../types/errors.js';
 import { getApiKeys } from './keystore.js';
 import * as fs from 'fs';
@@ -55,29 +55,46 @@ export async function createSpotOrder(order: SpotOrder): Promise<OrderResponse> 
   }
 
   try {
+    log(`Creating spot order: ${JSON.stringify(order)}`);
     const params: any = {
       symbol: order.symbol,
       side: order.side,
       type: order.type,
     };
 
+    // 处理标准订单参数
     if (order.quantity) params.quantity = order.quantity;
     if (order.price) params.price = order.price;
     if (order.timeInForce) params.timeInForce = order.timeInForce;
+    
+    // 处理报价资产数量订单参数
+    if (order.quoteOrderQty) {
+      params.quoteOrderQty = order.quoteOrderQty;
+      log(`Using quoteOrderQty: ${order.quoteOrderQty}`);
+    }
 
     if (order.type === 'LIMIT' && !order.price) {
       throw new OrderValidationError('Price is required for LIMIT orders');
     }
 
+    // 对于市价单，必须提供quantity或quoteOrderQty其中之一
+    if (order.type === 'MARKET' && !order.quantity && !order.quoteOrderQty) {
+      throw new OrderValidationError('For MARKET orders, either quantity or quoteOrderQty must be provided');
+    }
+
+    log(`Sending order with params: ${JSON.stringify(params)}`);
     const response = await client.newOrder(params);
+    log(`Order created successfully: ${JSON.stringify(response.data)}`);
     return response.data;
   } catch (error) {
     if (error instanceof OrderValidationError) {
       throw error;
     }
     if (error instanceof Error) {
+      logError(`Failed to create spot order:`, error);
       throw new BinanceClientError(`Failed to create spot order: ${error.message}`);
     }
+    logError('Failed to create spot order: Unknown error', error);
     throw new BinanceClientError('Failed to create spot order: Unknown error');
   }
 }
@@ -132,3 +149,6 @@ export async function getOpenOrders(symbol?: string): Promise<OrderResponse[]> {
     throw new BinanceClientError('Failed to get open orders: Unknown error');
   }
 }
+
+// 仅保留可以确认正常工作的API
+// 其他功能暂时移除
